@@ -1,0 +1,20 @@
+data/*
+notes/*
+tests/test_output/*
+
+*.swp
+*.swo
+*.vim
+.~*
+
+
+# Pydev files
+.pydevproject
+.project
+.settings/*
+
+# Python files
+*.pyc
+
+# Notebooks
+notebooks/.ipynb_checkpoints/*
