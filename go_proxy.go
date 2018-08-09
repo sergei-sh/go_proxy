@@ -8,6 +8,7 @@ import (
 
 //STARTUP PARAMETERS
 const port int = 8066
+const workerThreads = 8
 
 var routine_id int
 
@@ -29,7 +30,7 @@ func (h MyHandler) ServeHTTP(responseW http.ResponseWriter, request *http.Reques
 }
 
 func main() {
-    runtime.GOMAXPROCS(6)
+    runtime.GOMAXPROCS(3)
     LogInit()
 
     /* Using the application as an explicit HTTP/HTTPS proxy.
