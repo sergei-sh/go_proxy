@@ -18,7 +18,7 @@ func HandleConnect(responseW http.ResponseWriter, request *http.Request, l Logge
         return
     }
 
-    origConn, err := net.DialTimeout("tcp", request.Host, ConstTimeOutSec)
+    origConn, err := net.DialTimeout("tcp", request.Host, ConstTimeOut)
     if err != nil {
         http.Error(responseW, err.Error(), http.StatusBadGateway)
         l.Log("JRX", err)
