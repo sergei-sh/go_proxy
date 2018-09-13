@@ -11,6 +11,7 @@ import(
 // Set up a tunnel with the request addressee
 func HandleConnect(responseW http.ResponseWriter, request *http.Request, l Logger) {
     l.Log("J00")
+
     hijacker, ok := responseW.(http.Hijacker)
     if !ok {
         http.Error(responseW, "Hijacking not supported", http.StatusInternalServerError)

@@ -1,77 +1,101 @@
+/* Use baidu.com for testing, because it supports HTTP among few now.
+Search "pictures":
+http://www.baidu.com/s?ie=utf-8&f=8&rsv_bp=1&rsv_idx=1&tn=baidu&wd=pictures&oq=pictures&rsv_pq=e2e8bdf50001d014&rsv_t=19633Qxvy3eAnbL1isnp5lejNCAdPRcF3xp%2FP2NV1P92tfb%2FVMC8%2FsClWEQ&rqlang=cn&rsv_enter=1&rsv_sug3=1&rsv_sug2=0&inputT=5&rsv_sug4=2626&rsv_jmp=slow
+*/
+
 package main
 
 import (
     "net/http"
     "fmt"
     "runtime"
-    "time"
+    "os"
+    "os/signal"
+    "syscall"
+    "sync"
     )
 
-//STARTUP PARAMETERS
-const port int = 8066
-const workerThreads = 3
-const queueTimeOutMsec = 1000    
+/* STARTUP PARAMETERS */
 
-var routine_id int
-var rl Logger = Logger{0} // Root logger
+//Don't query pictures. Send from the cache only.
+const CacheOnly bool = false
 
-type proxyJob struct{
-    responseWriter http.ResponseWriter
-    request* http.Request
-}
+const proxyPort int = 8066
+
+const dbUser string = "serj"
+const dbPassword string = "qwerty"
+const dbHost string = "localhost"
+const dbPort int = 5432
+/* END */
+
+var routineId int
+var rl = NewLogger(0) // Root logger
 
 /*Need to override default ServeMux. Otherwise won't handle CONNECT because it doesn't receive valid path
 see https://echorand.me/dissecting-golangs-handlerfunc-handle-and-defaultservemux.html */
 type MyHandler struct{
-    jobs chan proxyJob
+    dbChannel chan DbJob
+    exitChannel chan bool
+    exitWg sync.WaitGroup
 }
 
 func (h MyHandler) ServeHTTP(responseW http.ResponseWriter, request *http.Request){
+    routineId++
+    routine := NewLoggerS(routineId,"J") 
+
     select {
-        case h.jobs <- proxyJob{responseW, request}:
-        // Let requests queue for small amount of time. If no workers available after waiting, drop a request
-        case <- time.After(time.Duration(queueTimeOutMsec) * time.Millisecond):
-            rl.Message("dropping ", *request.URL)
-            
+        case <- h.exitChannel: 
+            rl.Log("ServeHTTP exiting")
+            //This will send an empty response with code 200
+            return
+        default:
+            switch request.Method {
+                case http.MethodConnect:
+                    HandleConnect(responseW, request, routine)
+                default:
+                    var dbJob *DbJob
+                    HandleHttp(&dbJob, responseW, request, routine)
+
+                    if nil != dbJob {
+                        routine.Log("sending ", request.URL)
+                        h.dbChannel <- *dbJob
+                    }
+            }
     }
-
-}
-
-/* Fan-in */
-func (h MyHandler) workerSinkRoutine() {
-    routine_id++
-    var l Logger = Logger{routine_id} 
-
-    for {
-        select {
-            case job := <-h.jobs:
-                rl.Message("starting ", job.request.URL)
-                rl.Log("starting ", job.request.URL, "abc", "cd")
-                switch job.request.Method {
-                    case http.MethodConnect:
-                        HandleConnect(job.responseWriter, job.request, l)
-                    default:
-                        HandleHttp(job.responseWriter, job.request, l)
-                }
-                fmt.Println("done ", job.request.URL)
-           //case: add stop condition if needed
-        }
-    }
+    //routine.Log("done ")
 }
 
 func main() {
     /* Sets the number of goroutines actually running concurrently */
-    runtime.GOMAXPROCS(3)
+    curMP := runtime.GOMAXPROCS(6)
+    rl.Log("Current max proc:", curMP)
     LogInit()
 
-    mh := MyHandler{make(chan proxyJob)}
-    /* I would like to have a fixed number of routines as workers handling requests
-    This achieves 2 goals (comapred to spawning a new routine for each request):
-    -no overhead on spawning;
-    -no resource exhaustion in case of some workers are blocked infinitely; */
-    for i := 0; i < workerThreads; i++ {
-        go mh.workerSinkRoutine()
+    handler := MyHandler{
+        dbChannel: make(chan DbJob), 
+        exitChannel: make(chan bool),
+        exitWg: sync.WaitGroup{},
     }
+
+    go DbWorker(&handler, dbUser, dbPassword, dbHost, dbPort)
+
+    server := http.Server{
+        Addr: fmt.Sprintf(":%d", proxyPort),
+        Handler: handler,
+    }
+
+    /*  By Ctrl-c:
+    1. Stop creating additional DB jobs / cancel already received requests
+    2. Wait running job finished
+    3. Make server exit */
+    sigC := make(chan os.Signal, 1)
+    signal.Notify(sigC, os.Interrupt, syscall.SIGTERM)
+    go func(){
+            <-sigC
+            close(handler.exitChannel)
+            handler.exitWg.Wait()
+            server.Close()
+    }()
 
     /* Using the application as an explicit HTTP/HTTPS proxy.
     This means the client is configured to use the proxy for both protocols.
@@ -89,6 +113,6 @@ func main() {
             b) Handling HTTPS. Need to somehow know the original request destination domain name
                (if not part of request). Need to generate the certificate simialar to 1-b. 
     - left for future implementation */               
-    fmt.Println(http.ListenAndServe(fmt.Sprintf(":%d", port), mh))
+    rl.Log(server.ListenAndServe().Error())
 }
 
