@@ -51,7 +51,7 @@ func HandleHttp(dbJob **DbJob, responseW http.ResponseWriter, request *http.Requ
     origResponse, err := http.DefaultTransport.RoundTrip(request)
     if err != nil {
         http.Error(responseW, "Bad Gateway", http.StatusBadGateway)
-        l.Log("GX", err.Error())
+        l.Log("GXS", err.Error())
         return 
     }
 
@@ -64,7 +64,7 @@ func HandleHttp(dbJob **DbJob, responseW http.ResponseWriter, request *http.Requ
     l.Log("G", "responding")
     byPic, err := ioutil.ReadAll(respBodyT)
     if err != nil {
-        l.Log("GX", err.Error())
+        l.Log("GXR", err.Error())
         return 
     }
 

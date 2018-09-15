@@ -49,6 +49,7 @@ func (h MyHandler) ServeHTTP(responseW http.ResponseWriter, request *http.Reques
             //This will send an empty response with code 200
             return
         default:
+            h.exitWg.Add(1)            
             switch request.Method {
                 case http.MethodConnect:
                     HandleConnect(responseW, request, routine)
@@ -61,8 +62,9 @@ func (h MyHandler) ServeHTTP(responseW http.ResponseWriter, request *http.Reques
                         h.dbChannel <- *dbJob
                     }
             }
+            h.exitWg.Done()
+            routine.Log("done")
     }
-    //routine.Log("done ")
 }
 
 func main() {
@@ -93,9 +95,12 @@ func main() {
     go func(){
             <-sigC
             close(handler.exitChannel)
+            rl.Log("Waiting for requests/jobs to be processed")
             handler.exitWg.Wait()
+            rl.Log("All done")
             server.Close()
     }()
+    //TODO: enquire routines are not being waited as expected
 
     /* Using the application as an explicit HTTP/HTTPS proxy.
     This means the client is configured to use the proxy for both protocols.

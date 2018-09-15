@@ -4,7 +4,6 @@ import (
     "database/sql"
     _ "github.com/lib/pq"
     "fmt"
-    "time"
 )
 
 type DbJob struct{
@@ -32,15 +31,21 @@ func DbWorker(serverH *MyHandler, user string, password string, host string, por
     db = db
     l.Log("DB", "connected")
 
+    defer func() {
+        db.Close()
+        l.Log("DB", "worker is exiting")
+    }()
+
     // Sender will close the channel signalling stop
     for job := range serverH.dbChannel{
         select {
-            //Stop receiving on exit channel close
-            //Cannot justs close dbChannel, because need to do this from SIGINT handler
-            //Should not close channel from other routine than that sending to it
             case <- serverH.exitChannel:
-                l.Log("DB", "exitChannel")
-                break
+                //Stop handling further writes. Generally deferred Close() is enough by itself,
+                //but will wait for the already queued jobs to finish in this case
+
+                //Cannot justs close dbChannel, because need to do this from SIGINT handler
+                //Should not close channel from other routine than that sending to it
+                return
             default:
                 serverH.exitWg.Add(1)
                 handleJob(job)
@@ -49,17 +54,11 @@ func DbWorker(serverH *MyHandler, user string, password string, host string, por
         //TODO: enquire inserts are running seemingly concurrently while should be in a single thread
     }
 
-    db.Close()
-    l.Log("DB", "worker is exiting")
-
     // 1. add done if ? DB full
-    // 2. add close on Ctrl-c
 }
 
 func handleJob(job DbJob) {
     l.Log("DQ", "inserting ", job.url)
-
-    time.Sleep(5 * time.Second)
 
     _, err := db.Exec("insert into cached_files(url, data) values($1,$2)", job.url, job.data)
     if err != nil {
