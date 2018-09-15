@@ -26,6 +26,10 @@ const dbUser string = "serj"
 const dbPassword string = "qwerty"
 const dbHost string = "localhost"
 const dbPort int = 5432
+
+//Insert "G" to filter out HTTP-related logs
+//Insert "J" to filter out HTTPS-related logs
+const logFilter = ""
 /* END */
 
 var routineId int
@@ -36,12 +40,12 @@ see https://echorand.me/dissecting-golangs-handlerfunc-handle-and-defaultservemu
 type MyHandler struct{
     dbChannel chan DbJob
     exitChannel chan bool
-    exitWg sync.WaitGroup
+    exitWg *sync.WaitGroup
 }
 
 func (h MyHandler) ServeHTTP(responseW http.ResponseWriter, request *http.Request){
     routineId++
-    routine := NewLoggerS(routineId,"J") 
+    routine := NewLoggerS(routineId, logFilter) 
 
     select {
         case <- h.exitChannel: 
@@ -49,20 +53,21 @@ func (h MyHandler) ServeHTTP(responseW http.ResponseWriter, request *http.Reques
             //This will send an empty response with code 200
             return
         default:
-            h.exitWg.Add(1)            
             switch request.Method {
                 case http.MethodConnect:
+                    //Tunnels last long. So don't wait them
                     HandleConnect(responseW, request, routine)
                 default:
                     var dbJob *DbJob
+                    h.exitWg.Add(1)            
                     HandleHttp(&dbJob, responseW, request, routine)
+                    h.exitWg.Done()
 
                     if nil != dbJob {
                         routine.Log("sending ", request.URL)
                         h.dbChannel <- *dbJob
                     }
             }
-            h.exitWg.Done()
             routine.Log("done")
     }
 }
@@ -76,7 +81,7 @@ func main() {
     handler := MyHandler{
         dbChannel: make(chan DbJob), 
         exitChannel: make(chan bool),
-        exitWg: sync.WaitGroup{},
+        exitWg: &sync.WaitGroup{},
     }
 
     go DbWorker(&handler, dbUser, dbPassword, dbHost, dbPort)
@@ -100,13 +105,12 @@ func main() {
             rl.Log("All done")
             server.Close()
     }()
-    //TODO: enquire routines are not being waited as expected
 
     /* Using the application as an explicit HTTP/HTTPS proxy.
     This means the client is configured to use the proxy for both protocols.
     HTTPS requests are tunnelled through the proxy using CONNECT method.
 
-    Another options are:
+    Other options are:
         1. MITM proxy with explicit HTTPS proxying. Client is set up to use the proxy.
             a) Handling HTTP. Same as above.
             b) Handling HTTPS.  CONNECT doesn't open a tunnel but rather TLS connection to the origin is made. The client
